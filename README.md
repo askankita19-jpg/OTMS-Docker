@@ -1,49 +1,62 @@
 # OTMS-Docker
 
-**OTMS-Docker** is the containerized deployment version of the OTMS application.
+**OTMS-Docker** provides a containerized deployment model for the OTMS application using **Docker, Amazon ECR, Jenkins, and automated CI/CD**.
 
-It takes the same five OTMS application services and packages them as Docker images, with **Jenkins as the official CI/CD deployment mechanism**.
+The repository is designed to build, scan, version, publish, deploy, validate, and roll back OTMS container images through an automated Jenkins workflow.
 
-This repository represents the second deployment generation of the OTMS project.
+The deployment model separates application containerization from infrastructure and provides a repeatable Docker-based runtime.
 
 ---
 
-## Purpose
-
-The purpose of this repository is to demonstrate the evolution from traditional VM-based deployment to containerized application deployment.
+## Architecture
 
 ```text
-OTMS
- |
- | EC2 / AMI
- |
- v
-OTMS-Docker
- |
- | Docker containers
- |
- v
-OTMS-EKS
- |
- | Kubernetes
- |
- v
-OTMS-Monitoring
+                         Developer
+                             |
+                             v
+                          GitHub
+                             |
+                             v
+                          Jenkins
+                             |
+              +--------------+--------------+
+              |              |              |
+              v              v              v
+             CI         Docker Build      Security
+              |              |              |
+              |              v              v
+              |         Docker Images     Trivy
+              |              |              |
+              +--------------+--------------+
+                             |
+                             v
+                         Amazon ECR
+                             |
+                             v
+                       Docker Host
+                             |
+              +--------------+--------------+
+              |              |              |
+              v              v              v
+          Frontend        Backend APIs    Supporting
+          Container       Containers     Services
 ```
 
 ---
 
 ## Application Components
 
-| Component        | Technology         | Port |
-| ---------------- | ------------------ | ---: |
-| Frontend         | React              | 3000 |
-| Employee API     | Go                 | 8080 |
-| Attendance API   | Python             | 8081 |
-| Salary API       | Java / Spring Boot | 8082 |
-| Notification API | Python             | 8085 |
+The containerized application consists of:
 
-Databases:
+| Component        | Technology         | Container Port |
+| ---------------- | ------------------ | -------------: |
+| Frontend         | React              |           3000 |
+| Employee API     | Go                 |           8080 |
+| Attendance API   | Python             |           8081 |
+| Salary API       | Java / Spring Boot |           8082 |
+| Notification API | Python             |           8085 |
+
+Supporting databases:
 
 | Database   | Port |
 | ---------- | ---: |
@@ -53,75 +66,51 @@ Databases:
 
 ---
 
-## Architecture
+## Container Strategy
+
+Each application component is packaged as an independent container image.
 
 ```text
-Developer
-    |
-    v
-GitHub
-    |
-    v
-Jenkins
-    |
-    +--> Source Checks
-    |
-    +--> Tests
-    |
-    +--> SonarQube
-    |
-    +--> Gitleaks
-    |
-    +--> Trivy
-    |
-    v
-Docker Build
-    |
-    v
-Docker Images
-    |
-    v
-Amazon ECR
-    |
-    v
-Docker Host
-    |
-    +--> Frontend
-    +--> Employee API
-    +--> Attendance API
-    +--> Salary API
-    +--> Notification API
+OTMS-Docker
+│
+├── Frontend
+│   └── frontend image
+│
+├── Employee API
+│   └── employee-api image
+│
+├── Attendance API
+│   └── attendance-api image
+│
+├── Salary API
+│   └── salary-api image
+│
+└── Notification API
+    └── notification-api image
 ```
+
+Each image should be independently versioned and deployable.
 
 ---
 
-## Docker Images
+## Docker Build Principles
 
-Each application service is independently containerized.
+Docker images should follow these practices:
 
-```text
-otms/frontend
-otms/employee-api
-otms/attendance-api
-otms/salary-api
-otms/notification-api
-```
-
-Images are versioned rather than relying on `latest`.
-
-Example:
-
-```text
-employee-api:1.0.0
-employee-api:1.0.1
-employee-api:1.0.2
-```
-
-Where appropriate, immutable image digests are used for deployment.
+* Minimal base images where practical
+* Non-root execution where supported
+* No credentials embedded in images
+* `.dockerignore`
+* Explicit dependency versions
+* Application health checks
+* Reproducible builds
+* Versioned image tags
+* Immutable image digests
+* Vulnerability scanning before publication
 
 ---
 
-## CI/CD Pipeline
+## CI/CD Workflow
 
 ```text
 Checkout
@@ -145,7 +134,10 @@ Docker Build
 Trivy Image Scan
    |
    v
-Push to ECR
+Tag Image
+   |
+   v
+Push to Amazon ECR
    |
    v
 Deploy
@@ -156,164 +148,288 @@ Smoke Tests
 
 ---
 
-## Security
+## Image Versioning
 
-The container pipeline includes:
-
-* Gitleaks
-* SonarQube
-* Trivy
-* Dependency scanning
-* Docker image vulnerability scanning
-* Secret separation from images
-* Non-root containers where practical
-* Minimal base images
-
-Secrets must never be hardcoded inside:
-
-* Dockerfiles
-* source code
-* Compose files
-* Jenkinsfiles
-* Kubernetes manifests
-
----
-
-## Docker Compose
-
-A Docker Compose configuration may be provided for local development and testing.
+Images must not depend on a mutable `latest` tag for controlled deployments.
 
 Example:
 
 ```text
-docker compose
-     |
-     +--> frontend
-     +--> employee-api
-     +--> attendance-api
-     +--> salary-api
-     +--> notification-api
+frontend:1.0.0
+employee-api:1.0.0
+attendance-api:1.0.0
+salary-api:1.0.0
+notification-api:1.0.0
 ```
 
-However:
-
-> **Docker Compose is not the official deployment mechanism for this project.**
-
-The official deployment path is Jenkins.
+A deployment should retain enough information to identify the exact image version or digest running in the environment.
 
 ---
 
-## Deployment Principle
+## Amazon ECR
 
-This repository is independently deployable.
+Amazon Elastic Container Registry is used as the container image registry.
+
+The workflow is:
 
 ```text
 Jenkins
    |
    v
-Build
+Docker Build
    |
    v
-Scan
+Security Scan
    |
    v
-ECR
+Amazon ECR
    |
    v
 Docker Host
 ```
 
-It does not require the traditional `OTMS` EC2 deployment to be running.
-
-It also does not require `OTMS-EKS`.
+ECR repositories should use appropriate access control and image lifecycle policies.
 
 ---
 
-## Rollback
+## Docker Deployment
 
-Rollback is performed by deploying the previous known-good image version or immutable image digest.
+The official deployment path is through Jenkins.
 
 ```text
-Current
-1.0.2
-  |
-  | failure
-  v
-Previous
-1.0.1
+GitHub
+   |
+   v
+Jenkins
+   |
+   v
+Build Images
+   |
+   v
+Scan Images
+   |
+   v
+Push to ECR
+   |
+   v
+Deploy Containers
+   |
+   v
+Validate
 ```
 
-The rollback operation is controlled through Jenkins.
+Docker commands may be used during development and troubleshooting, but the controlled deployment workflow is Jenkins-driven.
+
+---
+
+## Docker Compose
+
+Docker Compose may be provided for local development and integration testing.
+
+Example:
+
+```text
+docker-compose.yml
+```
+
+can define the application services and their local dependencies.
+
+Compose is intended to simplify development and testing; controlled environment deployments remain Jenkins-driven.
 
 ---
 
 ## Configuration
 
-Application configuration is provided at runtime rather than baked into Docker images.
+Application configuration must be externalized from container images.
 
-Configuration may include:
+Environment-specific configuration should be supplied at deployment time.
 
-* Database endpoints
-* Redis endpoint
-* ScyllaDB endpoint
-* Application environment
-* API configuration
-* Secrets
+Sensitive values must never be baked into:
 
-Sensitive values are managed externally.
+* Dockerfiles
+* Docker images
+* Compose files committed to source control
+* Application source code
 
 ---
 
-## Project Goals
+## Security
 
-This repository demonstrates:
+Security is integrated into the container lifecycle.
 
-* Docker containerization
-* Multi-service container deployment
-* Docker image versioning
-* Amazon ECR
-* Jenkins-driven container CI/CD
-* Container security scanning
-* Immutable deployment artifacts
-* Rollback
-* Runtime configuration management
+### Source Security
+
+Gitleaks scans source code for accidentally committed secrets.
+
+### Code Quality
+
+SonarQube provides static analysis.
+
+### Image Security
+
+Trivy scans container images for known vulnerabilities.
+
+### Runtime Security
+
+Containers should:
+
+* Run with the minimum required privileges
+* Avoid unnecessary Linux capabilities
+* Avoid running as root where practical
+* Expose only required ports
+* Receive secrets through secure configuration mechanisms
 
 ---
 
-## Relationship with OTMS
+## Health Checks
 
-`OTMS-Docker` uses the same OTMS application concept but represents a separate deployment architecture.
+Each application container should provide an appropriate health mechanism.
+
+The deployment pipeline should verify that containers become healthy after deployment.
+
+Conceptually:
 
 ```text
-OTMS
-Traditional VM
-    |
-    v
-OTMS-Docker
-Containers
+Deploy
+  |
+  v
+Container Started
+  |
+  v
+Health Check
+  |
+  +---- FAIL ----> Deployment Failed
+  |
+  +---- PASS ----> Smoke Tests
 ```
 
-The two deployments are independent.
+---
+
+## Rollback
+
+Container deployments use previously validated image versions for rollback.
+
+Example:
+
+```text
+Current
+employee-api:1.0.2
+
+       |
+       | failure
+       v
+
+Rollback
+
+employee-api:1.0.1
+```
+
+The rollback should be performed through the Jenkins deployment workflow.
 
 ---
 
-## Related Repositories
+## Repository Structure
 
-* **OTMS** — Traditional EC2/AMI deployment
-* **OTMS-Docker** — Docker deployment
-* **OTMS-EKS** — Kubernetes/EKS deployment
-* **OTMS-Monitoring** — Monitoring and orchestration
+```text
+OTMS-Docker/
+│
+├── applications/
+│   ├── frontend/
+│   ├── employee-api/
+│   ├── attendance-api/
+│   ├── salary-api/
+│   └── notification-api/
+│
+├── docker/
+│   ├── frontend/
+│   ├── employee-api/
+│   ├── attendance-api/
+│   ├── salary-api/
+│   └── notification-api/
+│
+├── compose/
+│   └── docker-compose.yml
+│
+├── Jenkinsfile
+├── scripts/
+│
+└── README.md
+```
 
 ---
 
-## Project Status
+## Prerequisites
 
-🚧 **Under Development**
+Typical requirements include:
+
+* Git
+* Jenkins
+* Docker
+* Docker Compose
+* AWS CLI
+* AWS IAM permissions
+* Amazon ECR
+* Trivy
+* Gitleaks
+* SonarQube
+* Required application language runtimes for CI
 
 ---
 
-## Author
+## Deployment Validation
 
-**Ankita**
+A deployment is successful only after:
 
-DevOps / Cloud Engineering Project
+* Images are successfully built
+* Security scans pass
+* Images are available in ECR
+* Containers start successfully
+* Health checks pass
+* Required application endpoints respond
+* Application connectivity is validated
+* Smoke tests pass
+
+---
+
+## Deployment Principles
+
+1. Build once and deploy the validated image.
+2. Never store secrets inside images.
+3. Use versioned images.
+4. Prefer immutable image digests.
+5. Scan images before deployment.
+6. Deploy through Jenkins.
+7. Validate application health after deployment.
+8. Keep rollback versions available.
+9. Keep infrastructure and configuration reproducible.
+10. Avoid unnecessary container privileges.
+
+---
+
+## Project Goal
+
+The goal of this repository is to provide a reliable container-based deployment model for OTMS.
+
+The complete lifecycle is:
+
+```text
+CODE
+ ↓
+CI
+ ↓
+SECURITY SCANNING
+ ↓
+DOCKER BUILD
+ ↓
+IMAGE SCAN
+ ↓
+ECR
+ ↓
+DEPLOY
+ ↓
+HEALTH CHECK
+ ↓
+SMOKE TEST
+ ↓
+ROLLBACK / DESTROY
+```
